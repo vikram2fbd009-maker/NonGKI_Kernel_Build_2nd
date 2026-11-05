@@ -2,17 +2,15 @@ name: Build Xiaomi Redmi Note 10 5G (AOSP Based A13) (Kernel 4.14)
 
 on:
   workflow_call:
-  workflow_dispatch:
+  workflow_dispatch: # 👈 Ye line "Run workflow" button enable karti hai
 
 env:
-  # Device env
   DEVICE_NAME : "camellia"
   DEVICE_CODENAME : "camellia"
 
   CUSTOM_CMDS : "CLANG_TRIPLE=aarch64-linux-gnu-"
   EXTRA_CMDS : "LD=ld.lld LLVM=1 LLVM_IAS=1"
 
-  # 👇 CLEAN SOURCE (camellia-devs) 👇
   KERNEL_SOURCE : "https://github.com/camellia-devs/kernel_xiaomi_mt6833.git"
   KERNEL_BRANCH : "flyme"
 
@@ -32,7 +30,6 @@ env:
 
   KERNELSU_SOURCE : ""
   KERNELSU_BRANCH : ""
-
   KERNELSU_AUTO_GET : "true"
   KERNELSU_AUTO_FORK : "bakasu"
 
@@ -44,18 +41,14 @@ env:
   AK3_BRANCH : "master"
 
   BOOT_SOURCE : ""
-
   NEED_DTBO : false
   NEED_SAFE_DTBO : false
 
   ROM_TEXT : "aosp_a13_4.14"
-
-  # Other env
   PYTHON_VERSION: "3"
 
   PACK_METHOD: "AnyKernel3"
   PACK_KMODULES: "false"
-
   KERNELSU_METHOD: "shell"
 
   PATCHES_SOURCE: "JackA1ltman/NonGKI_Kernel_Patches"
@@ -65,7 +58,6 @@ env:
   DROIDSPACES_ENABLE: "false"
   NOMOUNT_ENABLE: "true"
 
-  # 👇 MANUAL HOOK FORCED 👇
   HOOK_METHOD: "syscall"
 
   KPM_ENABLE: "false"
@@ -112,36 +104,27 @@ jobs:
       - name: 🔗 Patch for no-kprobe
         uses: ./.github/workflows/patch-no-kprobe
 
-      # 👇 YE NAYA FIX STEP HAI 👇
       - name: 🔧 Fix BakaSU v4.2.0 Manual Hook Requirement
         run: |
           cd $GITHUB_WORKSPACE/device_kernel
           if ! grep -q "ksu_handle_newfstat_ret" fs/stat.c; then
             echo "✅ Adding ksu_handle_newfstat_ret hook to fs/stat.c"
             python3 - <<'PYEOF'
-import re
-with open('fs/stat.c', 'r') as f:
-    content = f.read()
-
-if "ksu_handle_newfstat_ret" not in content:
-    # 1. Add extern declaration
-    content = re.sub(r'(#include <linux/security.h>)', r'\1\n#ifdef CONFIG_KSU\nextern bool ksu_handle_newfstat_ret(int *dfd, const char __user **filename, struct kstat **stat);\n#endif', content)
-    
-    # 2. Inject into vfs_fstatat
-    pattern = r'(error = vfs_statx\([^;]+\);?)'
-    if re.search(pattern, content):
-        content = re.sub(pattern, r'\1\n#ifdef CONFIG_KSU\n\tif (!error) {\n\t\tksu_handle_newfstat_ret(&dfd, &filename, &stat);\n\t}\n#endif', content, count=1)
-    else:
-        print("Could not find vfs_statx call in fs/stat.c")
-
-    with open('fs/stat.c', 'w') as f:
-        f.write(content)
-    print("✅ fs/stat.c patched successfully.")
-else:
-    print("ksu_handle_newfstat_ret already present")
-PYEOF
+          import re
+          with open('fs/stat.c', 'r') as f:
+              content = f.read()
+          if "ksu_handle_newfstat_ret" not in content:
+              content = re.sub(r'(#include <linux/security.h>)', r'\1\n#ifdef CONFIG_KSU\nextern bool ksu_handle_newfstat_ret(int *dfd, const char __user **filename, struct kstat **stat);\n#endif', content)
+              pattern = r'(error = vfs_statx\([^;]+\);?)'
+              if re.search(pattern, content):
+                  content = re.sub(pattern, r'\1\n#ifdef CONFIG_KSU\n\tif (!error) {\n\t\tksu_handle_newfstat_ret(&dfd, &filename, &stat);\n\t}\n#endif', content, count=1)
+              with open('fs/stat.c', 'w') as f:
+                  f.write(content)
+              print("✅ fs/stat.c patched successfully.")
+          else:
+              print("ksu_handle_newfstat_ret already present")
+          PYEOF
           fi
-      # 👆 FIX KHATAM 👆
 
       - name: 🛡️ Patch Kernel of NoMount
         uses: ./.github/workflows/patch-nomount
@@ -150,14 +133,9 @@ PYEOF
         run: |
           cd $GITHUB_WORKSPACE/device_kernel
           DEFCONFIG="arch/arm64/configs/camellia_defconfig"
-          
-          # Manual hook ON karo
           sed -i '/CONFIG_KSU_MANUAL_HOOK/d' "$DEFCONFIG"
           echo 'CONFIG_KSU_MANUAL_HOOK=y' >> "$DEFCONFIG"
-          
-          # SUSFS SUS_SU ko OFF karo taaki koi conflict na ho
           sed -i 's/^CONFIG_KSU_SUSFS_SUS_SU=y/# CONFIG_KSU_SUSFS_SUS_SU is not set/' "$DEFCONFIG"
-          
           echo "✅ Manual Hook enforced successfully!"
 
       - name: 🚀 Build Process
