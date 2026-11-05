@@ -12,8 +12,9 @@ env:
   CUSTOM_CMDS : "CLANG_TRIPLE=aarch64-linux-gnu-"
   EXTRA_CMDS : "LD=ld.lld LLVM=1 LLVM_IAS=1"
 
-  KERNEL_SOURCE : "https://github.com/vikram2fbd009-maker/Kernel_mt6833_bakasu_3.0ghz.git"
-  KERNEL_BRANCH : "main"
+  # 👇 CLEAN SOURCE (camellia-devs) 👇
+  KERNEL_SOURCE : "https://github.com/camellia-devs/kernel_xiaomi_mt6833.git"
+  KERNEL_BRANCH : "flyme"
 
   CLANG_SOURCE : "https://github.com/kdrag0n/proton-clang.git"
   CLANG_BRANCH : "master"
@@ -62,8 +63,9 @@ env:
 
   REKERNEL_ENABLE: "false"
   DROIDSPACES_ENABLE: "false"
-  NOMOUNT_ENABLE: "false"
+  NOMOUNT_ENABLE: "true"
 
+  # 👇 MANUAL HOOK FORCED 👇
   HOOK_METHOD: "syscall"
 
   KPM_ENABLE: "false"
@@ -110,35 +112,24 @@ jobs:
       - name: 🔗 Patch for no-kprobe
         uses: ./.github/workflows/patch-no-kprobe
 
-      # 👇 YE NAYA FIX STEP HAI 👇
-      - name: 🛠 Fix sched.h Duplicates (Patch Conflict)
+      - name: 🛡️ Patch Kernel of NoMount
+        uses: ./.github/workflows/patch-nomount
+
+      # 👇 MANUAL HOOK CONFIG FIX 👇
+      - name: 🛠 Enforce Manual Hook in Defconfig
         run: |
           cd $GITHUB_WORKSPACE/device_kernel
-          python3 - <<'PYEOF'
-          import re
-          file_path = 'include/linux/sched.h'
-          try:
-              with open(file_path, 'r') as f:
-                  content = f.read()
-
-              pattern = re.compile(r'static inline struct pid \*task_pid\(struct task_struct \*task\).*?static inline pid_t task_ppid_nr\(const struct task_struct \*tsk\)\s*\{.*?\}', re.DOTALL)
-              matches = list(pattern.finditer(content))
-
-              if len(matches) > 1:
-                  start, end = matches[1].span()
-                  if content[:start].rstrip().endswith('};'):
-                      start = content[:start].rfind('};')
-                  content = content[:start] + content[end:]
-                  content = re.sub(r'\n{3,}', '\n\n', content)
-                  with open(file_path, 'w') as f:
-                      f.write(content)
-                  print("✅ sched.h duplicate code removed successfully!")
-              else:
-                  print("⚠️ No duplicates found in sched.h.")
-          except Exception as e:
-              print(f"❌ Error fixing sched.h: {e}")
-          PYEOF
-      # 👆 FIX STEP KHATAM 👆
+          DEFCONFIG="arch/arm64/configs/camellia_defconfig"
+          
+          # Manual hook ON karo
+          sed -i '/CONFIG_KSU_MANUAL_HOOK/d' "$DEFCONFIG"
+          echo 'CONFIG_KSU_MANUAL_HOOK=y' >> "$DEFCONFIG"
+          
+          # SUSFS SUS_SU ko OFF karo taaki koi conflict na ho
+          sed -i 's/^CONFIG_KSU_SUSFS_SUS_SU=y/# CONFIG_KSU_SUSFS_SUS_SU is not set/' "$DEFCONFIG"
+          
+          echo "✅ Manual Hook enforced successfully!"
+      # 👆 FIX KHATAM 👆
 
       - name: 🚀 Build Process
         uses: ./.github/workflows/build-process
