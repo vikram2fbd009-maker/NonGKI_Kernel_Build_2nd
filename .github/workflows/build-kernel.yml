@@ -110,6 +110,36 @@ jobs:
       - name: 🔗 Patch for no-kprobe
         uses: ./.github/workflows/patch-no-kprobe
 
+      # 👇 YE NAYA FIX STEP HAI 👇
+      - name: 🛠 Fix sched.h Duplicates (Patch Conflict)
+        run: |
+          cd $GITHUB_WORKSPACE/device_kernel
+          python3 - <<'PYEOF'
+          import re
+          file_path = 'include/linux/sched.h'
+          try:
+              with open(file_path, 'r') as f:
+                  content = f.read()
+
+              pattern = re.compile(r'static inline struct pid \*task_pid\(struct task_struct \*task\).*?static inline pid_t task_ppid_nr\(const struct task_struct \*tsk\)\s*\{.*?\}', re.DOTALL)
+              matches = list(pattern.finditer(content))
+
+              if len(matches) > 1:
+                  start, end = matches[1].span()
+                  if content[:start].rstrip().endswith('};'):
+                      start = content[:start].rfind('};')
+                  content = content[:start] + content[end:]
+                  content = re.sub(r'\n{3,}', '\n\n', content)
+                  with open(file_path, 'w') as f:
+                      f.write(content)
+                  print("✅ sched.h duplicate code removed successfully!")
+              else:
+                  print("⚠️ No duplicates found in sched.h.")
+          except Exception as e:
+              print(f"❌ Error fixing sched.h: {e}")
+          PYEOF
+      # 👆 FIX STEP KHATAM 👆
+
       - name: 🚀 Build Process
         uses: ./.github/workflows/build-process
 
