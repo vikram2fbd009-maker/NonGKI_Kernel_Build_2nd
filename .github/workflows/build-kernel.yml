@@ -112,10 +112,40 @@ jobs:
       - name: 🔗 Patch for no-kprobe
         uses: ./.github/workflows/patch-no-kprobe
 
+      # 👇 YE NAYA FIX STEP HAI 👇
+      - name: 🔧 Fix BakaSU v4.2.0 Manual Hook Requirement
+        run: |
+          cd $GITHUB_WORKSPACE/device_kernel
+          if ! grep -q "ksu_handle_newfstat_ret" fs/stat.c; then
+            echo "✅ Adding ksu_handle_newfstat_ret hook to fs/stat.c"
+            python3 - <<'PYEOF'
+import re
+with open('fs/stat.c', 'r') as f:
+    content = f.read()
+
+if "ksu_handle_newfstat_ret" not in content:
+    # 1. Add extern declaration
+    content = re.sub(r'(#include <linux/security.h>)', r'\1\n#ifdef CONFIG_KSU\nextern bool ksu_handle_newfstat_ret(int *dfd, const char __user **filename, struct kstat **stat);\n#endif', content)
+    
+    # 2. Inject into vfs_fstatat
+    pattern = r'(error = vfs_statx\([^;]+\);?)'
+    if re.search(pattern, content):
+        content = re.sub(pattern, r'\1\n#ifdef CONFIG_KSU\n\tif (!error) {\n\t\tksu_handle_newfstat_ret(&dfd, &filename, &stat);\n\t}\n#endif', content, count=1)
+    else:
+        print("Could not find vfs_statx call in fs/stat.c")
+
+    with open('fs/stat.c', 'w') as f:
+        f.write(content)
+    print("✅ fs/stat.c patched successfully.")
+else:
+    print("ksu_handle_newfstat_ret already present")
+PYEOF
+          fi
+      # 👆 FIX KHATAM 👆
+
       - name: 🛡️ Patch Kernel of NoMount
         uses: ./.github/workflows/patch-nomount
 
-      # 👇 MANUAL HOOK CONFIG FIX 👇
       - name: 🛠 Enforce Manual Hook in Defconfig
         run: |
           cd $GITHUB_WORKSPACE/device_kernel
@@ -129,7 +159,6 @@ jobs:
           sed -i 's/^CONFIG_KSU_SUSFS_SUS_SU=y/# CONFIG_KSU_SUSFS_SUS_SU is not set/' "$DEFCONFIG"
           
           echo "✅ Manual Hook enforced successfully!"
-      # 👆 FIX KHATAM 👆
 
       - name: 🚀 Build Process
         uses: ./.github/workflows/build-process
