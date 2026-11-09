@@ -15,20 +15,21 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y bc bison build-essential ccache curl flex g++-multilib gcc-multilib git gnupg gperf imagemagick lib32ncurses5-dev lib32readline-dev lib32z1-dev liblz4-tool libncurses5 libncurses5-dev libsdl1.2-dev libssl-dev libxml2 libxml2-utils lzop pngcrush rsync schedtool squashfs-tools xsltproc zip zlib1g-dev python3
 
-      - name: Clone Kernel Source
+      - name: Clone Kernel Source & Toolchain
         run: |
-          # Aapka modified source yahan se clone hoga
+          # 1. Aapka modified kernel source clone hoga
           git clone --depth 1 --single-branch --branch flyme https://github.com/vikram2fbd009-maker/kernel_xiaomi_mt6833.git kernel-source
           cd kernel-source
           
-          # Clang 11 (r383902) Download
-          git clone --depth 1 https://github.com/LineageOS/android_prebuilts_clang_kernel_linux-x86_clang-r383902.git prebuilts/clang/host/linux-x86/clang-r383902
-          git clone --depth 1 https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-gnu-4.9.git prebuilts/gcc/linux-x86/aarch64/aarch64-linux-gnu-4.9
+          # 2. Clang 11 (r383902) aur GCC 4.9 Download (Naye Active Links)
+          git clone --depth 1 https://github.com/crdroidandroid/android_prebuilts_clang_kernel_linux-x86_clang-r383902.git prebuilts/clang/host/linux-x86/clang-r383902
+          git clone --depth 1 https://github.com/crdroidandroid/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-gnu-4.9.git prebuilts/gcc/linux-x86/aarch64/aarch64-linux-gnu-4.9
 
       - name: Compile Kernel
         run: |
           cd kernel-source
           
+          # Toolchain paths set karein
           export PATH=$PWD/prebuilts/clang/host/linux-x86/clang-r383902/bin:$PWD/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-gnu-4.9/bin:$PATH
           export ARCH=arm64
           export SUBARCH=arm64
@@ -36,14 +37,14 @@ jobs:
           export CC=clang
           export CLANG_TRIPLE=aarch64-linux-gnu-
           
-          # Defconfig load
+          # Defconfig load karein (camellia_defconfig)
           make O=out ARCH=arm64 camellia_defconfig
           
-          # Build start
+          # Build start karein
           make -j$(nproc --all) O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- 2>&1 | tee kernel.log
 
       - name: Upload Kernel Image
         uses: actions/upload-artifact@v4
         with:
-          name: Image
+          name: Kernel-Image
           path: kernel-source/out/arch/arm64/boot/Image*
