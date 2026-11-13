@@ -1,54 +1,113 @@
-name: "Xiaomi MT6833 (Stock Spoofed Build)"
+name: "MT6833 Fast Build"
 
 on:
-  workflow_dispatch: 
+  workflow_dispatch:
+  push:
+    branches: [main]
 
 jobs:
-  build-kernel:
+  build:
     runs-on: ubuntu-22.04
+    timeout-minutes: 90
     steps:
-      - name: Checkout Build Repo
-        uses: actions/checkout@v4
-
-      - name: Setup Dependencies
+      - name: Dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y bc bison build-essential ccache curl flex g++-multilib gcc-multilib git gnupg gperf imagemagick lib32ncurses5-dev lib32readline-dev lib32z1-dev liblz4-tool libncurses5 libncurses5-dev libsdl1.2-dev libssl-dev libxml2 libxml2-utils lzop pngcrush rsync schedtool squashfs-tools xsltproc zip zlib1g-dev python3
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq bc bison build-essential ccache curl flex g++-multilib gcc-multilib git gperf lib32ncurses5-dev lib32readline-dev lib32z1-dev liblz4-tool libncurses5-dev libsdl1.2-dev libssl-dev libxml2 libxml2-utils lzop pngcrush rsync schedtool squashfs-tools xsltproc zip zlib1g-dev python3
 
-      - name: Clone Kernel Source & Toolchain
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: ccache-${{ runner.os }}-${{ hashFiles('**/Makefile') }}
+          restore-keys: ccache-${{ runner.os }}-
+
+      - name: Cache toolchains
+        uses: actions/cache@v4
+        with:
+          path: |
+            kernel-source/prebuilts/clang
+            kernel-source/prebuilts/gcc
+          key: toolchain-${{ runner.os }}-v1
+
+      - name: ccache setup
         run: |
-          # 1. Aapka modified kernel source clone hoga
-          git clone --depth 1 --single-branch --branch flyme https://github.com/vikram2fbd009-maker/kernel_xiaomi_mt6833.git kernel-source
+          ccache --max-size=10G
+          ccache --set-config=compression=true
+          ccache --zero-stats
+
+      - name: Clone + Build
+        run: |
+          git clone --depth 1 --single-branch --branch main https://github.com/vikram2fbd009-maker/Original_mt6833.git kernel-source
           cd kernel-source
-          
-          # 2. Clang 11 (r383902) - Naya Public Link
-          git clone --depth 1 https://github.com/picasso09/clang-11.0.1-r383902.git prebuilts/clang/host/linux-x86/clang-r383902
-          
-          # 3. GCC 4.9 - Naya Public Link (aarch64-linux-android-4.9)
-          git clone --depth 1 https://github.com/aosp-project/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9.git prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9
 
-      - name: Compile Kernel
-        run: |
-          cd kernel-source
-          
-          # Toolchain paths set karein (GCC path ab aarch64-linux-android-4.9 hai)
+          [ -d prebuilts/clang/host/linux-x86/clang-r383902 ] || \
+            git clone --depth 1 https://github.com/picasso09/clang-11.0.1-r383902.git prebuilts/clang/host/linux-x86/clang-r383902
+
+          [ -d prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9 ] || \
+            git clone --depth 1 https://github.com/aosp-project/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9.git prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9
+
           export PATH=$PWD/prebuilts/clang/host/linux-x86/clang-r383902/bin:$PWD/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/bin:$PATH
-          
-          export ARCH=arm64
-          export SUBARCH=arm64
-          # CROSS_COMPILE ab android ke liye set hai
+          export ARCH=arm64 SUBARCH=arm64
           export CROSS_COMPILE=aarch64-linux-android-
-          export CC=clang
           export CLANG_TRIPLE=aarch64-linux-gnu-
-          
-          # Defconfig load karein
-          make O=out ARCH=arm64 camellia_defconfig
-          
-          # Build start karein
-          make -j$(nproc --all) O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-android- 2>&1 | tee kernel.log
+          export USE_CCACHE=1 CCACHE_DIR=$HOME/.ccache
+          export CC="ccache clang"
+
+          echo ">>> Load defconfig"
+          make O=out ARCH=arm64 camellian_in_eea_defconfig
+
+          echo ">>> Speed tweaks: disable debug info"
+          scripts/config --file out/.config -d DEBUG_INFO -d DEBUG_INFO_DWARF4 -d DEBUG_INFO_REDUCED -d GDB_SCRIPTS
+          scripts/config --file out/.config -e CC_OPTIMIZE_FOR_PERFORMANCE 2>/dev/null || true
+          make O=out ARCH=arm64 olddefconfig
+
+          echo ">>> Building (fast mode, warnings suppressed)"
+          START=$(date +%s)
+          make -j$(nproc --all) O=out ARCH=arm64 \
+            CC="ccache clang" \
+            CLANG_TRIPLE=aarch64-linux-gnu- \
+            CROSS_COMPILE=aarch64-linux-android- \
+            KCFLAGS="-w" \
+            --no-print-directory 2>&1 | tee build.log
+          END=$(date +%s)
+          echo ">>> Build time: $((END-START)) seconds"
+
+      - name: Extract First 30 Errors
+        if: always()
+        run: |
+          cd kernel-source
+          grep -iE "error:|fatal error:|undefined reference|No rule to make" build.log \
+            | grep -v "error.h" | head -30 > errors.txt || true
+
+          echo "================================================================"
+          echo "  FIRST 30 ERRORS"
+          echo "================================================================"
+          cat errors.txt || echo "No errors found"
+          echo "================================================================"
+          echo "  KERNEL IMAGE"
+          echo "================================================================"
+          ls -lh out/arch/arm64/boot/Image* 2>/dev/null || echo "No image"
+          echo "================================================================"
+          echo "  CCACHE STATS"
+          echo "================================================================"
+          ccache -s
 
       - name: Upload Kernel Image
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: Kernel-Image
           path: kernel-source/out/arch/arm64/boot/Image*
+          compression-level: 0
+          retention-days: 30
+
+      - name: Upload Errors + Log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Build-Errors
+          path: |
+            kernel-source/errors.txt
+            kernel-source/build.log
+          retention-days: 7
